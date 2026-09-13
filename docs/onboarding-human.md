@@ -1,108 +1,81 @@
-# AgentMarket 接入指南（人类用户）
+# 人类用户接入指南
 
-> 服务器地址：`http://8.133.218.16:8000`
+本仓库只包含客户端。服务端由 AgentMarket 部署方提供。
 
----
+生产 API Base：
 
-## 一、作为买家（零门槛，无需注册）
+```text
+http://8.133.218.16:8000/api/v1
+```
 
-### 方式 A：Python SDK（推荐）
+## 安装
 
 ```bash
-# 安装
-git clone https://github.com/CongQIANFN/agentmarket.git
-cd agentmarket
-uv sync
+pip install git+https://github.com/CongQIANFN/agentmarket-sdk.git
 ```
+
+## 买家
+
+无需注册或 API Key：
+
+```bash
+export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+agentmarket buyer query "上海天气"
+agentmarket buyer acquire "<object_id>"
+agentmarket buyer transactions
+```
+
+Python：
 
 ```python
 from agentmarket import Client
 
 client = Client(base_url="http://8.133.218.16:8000/api/v1")
-
-# 1. 搜索知识
-results = client.knowledge.query("贵州茅台 基本面")
-for r in results:
-    print(f"{r.topic} - {r.price_cents}分 - 质量{r.quality_score}")
-
-# 2. 获取内容（0 元自动完成）
-k = client.knowledge.acquire(results[0].object_id)
-print(k.content)
+results = client.knowledge.query("上海天气")
+item = client.knowledge.acquire(results[0].object_id)
+print(item.content)
 ```
 
-### 方式 B：直接 HTTP
+## 卖家
+
+先在卖家网页后台完成邮箱登录并创建一次性 API Key。CLI 网页命令使用邮箱验证码登录：
 
 ```bash
-# 搜索
-curl -s -X POST http://8.133.218.16:8000/api/v1/knowledge/query \
-  -H "Content-Type: application/json" \
-  -d '{"query":"贵州茅台","limit":3}' | python3 -m json.tool
-
-# 获取内容（需维护 X-Client-Session 会话标识）
-curl -s -X POST http://8.133.218.16:8000/api/v1/knowledge/acquire \
-  -H "Content-Type: application/json" \
-  -H "X-Client-Session: my_session_001" \
-  -d '{"object_id":"ko_seed_002"}' | python3 -m json.tool
+agentmarket seller login you@example.com
 ```
 
-### 付费对象（当前全部免费，后续开放）
-
-付费对象 acquire 会返回 HTTP 402 + `Payment-Needed` Header（含账单），支付宝扫码付款后凭 Proof 重发 acquire 获取内容。
-
----
-
-## 二、作为卖家（创作者，需 API Key）
-
-### 1. 获取凭证
-
-联系平台管理员，在服务器执行：
+机器命令使用 API Key 和 seller ID：
 
 ```bash
-bash /opt/agentmarket/scripts/server_init.sh
+agentmarket config set api-key "<your_api_key>"
+agentmarket config set seller-id "<your_seller_id>"
+agentmarket seller list
+agentmarket seller dashboard
 ```
 
-拿到 `ak_prod_xxx`（API Key）和 `creator_prod_xxx`（创作者 ID）。
+发布文件示例：
 
-### 2. 发布数据
-
-```python
-from agentmarket import Client
-
-client = Client(
-    base_url="http://8.133.218.16:8000/api/v1",
-    api_key="ak_prod_xxx",          # 管理员给的 key
-    creator_id="creator_prod_001",   # 管理员给的 ID
-)
-
-# 发布知识对象
-result = client.creator.publish_object({
-    "topic": "长江电力 2026Q2 基本面分析",
-    "value_type": "human_judgment",
-    "source_type": "hosted",
-    "content": {"roe": "16%", "debt_ratio": "54%"},
-    "freshness": {"type": "snapshot", "valid_until": "2027-01-01T00:00:00Z"},
-    "pricing": {"price_per_call_cents": 0},  # 当前免费
-})
-print(f"发布成功: {result['object_id']}")
-
-# 查看已发布的对象
-objects = client.creator.list_objects()
-for o in objects["objects"]:
-    print(f"{o['object_id']} - {o['topic']} - {o['status']}")
-
-# 下架对象
-client.creator.archive_object("ko_xxx")
+```json
+{
+  "topic": "上海天气观察",
+  "tags": ["天气", "上海"],
+  "value_type": "human_judgment",
+  "content": {
+    "summary": "示例内容"
+  },
+  "freshness": {
+    "type": "snapshot",
+    "valid_until": "2026-12-31T00:00:00Z"
+  },
+  "pricing": {
+    "price_per_call_cents": 0,
+    "currency": "CNY"
+  }
+}
 ```
 
-### 3. API 端点一览
+```bash
+agentmarket seller publish --file objects.json
+```
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/creator/objects` | POST | 发布知识对象 |
-| `/creator/objects/{id}` | PUT | 更新知识对象 |
-| `/creator/objects/import` | POST | 批量导入（≤500 条/批） |
-| `/creator/objects` | GET | 查看对象列表 |
-| `/creator/objects/{id}/archive` | POST | 下架对象 |
-| `/creator/payment/settings` | GET/PUT | 支付模式配置（A/B 模式） |
-| `/creator/settlement/balance` | GET | 查看结算余额 |
-| `/creator/settlement/withdraw` | POST | 发起提现 |
+API Key 只显示一次；请勿提交到代码仓库、日志或聊天记录。

@@ -1,6 +1,6 @@
 [project]
 name = "agentmarket-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "AgentMarket SDK - 面向 AI Agent 的按次付费数据集市客户端"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,6 +10,9 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[project.scripts]
+agentmarket = "agentmarket.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentmarket"]
