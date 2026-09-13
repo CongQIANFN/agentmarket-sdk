@@ -38,20 +38,33 @@ print(item.content)
 
 ## 卖家
 
-先在卖家网页后台完成邮箱登录并创建一次性 API Key。CLI 网页命令使用邮箱验证码登录：
+CLI 的卖家身份分两条独立路径。不要在同一个配置目录里同时保存 API Key 和邮箱 Cookie。
+
+### 机器接入
+
+先在卖家网页后台完成邮箱登录并创建一次性 API Key。随后在用于 Agent/CLI 的新配置目录中只配置机器凭证：
 
 ```bash
-agentmarket seller login you@example.com
-```
-
-机器命令使用 API Key 和 seller ID：
-
-```bash
+export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
 agentmarket config set api-key "<your_api_key>"
 agentmarket config set seller-id "<your_seller_id>"
 agentmarket seller list
 agentmarket seller dashboard
 ```
+
+这条路径不需要 `seller login` 或 `seller me`。
+
+### 邮箱网页会话
+
+在另一个独立 `AGENTMARKET_HOME` 中使用邮箱验证码登录；这条路径不要保存机器 API Key：
+
+```bash
+AGENTMARKET_HOME="$HOME/.agentmarket/web" agentmarket seller login you@example.com
+AGENTMARKET_HOME="$HOME/.agentmarket/web" agentmarket seller me
+AGENTMARKET_HOME="$HOME/.agentmarket/web" agentmarket seller applications
+```
+
+服务端/CLI 会拒绝机器 Key 与网页 Cookie 同时存在，错误码为 `90004`。切换身份时先执行 `seller logout`，或改用另一个独立 `AGENTMARKET_HOME`。
 
 发布文件示例：
 

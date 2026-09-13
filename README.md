@@ -54,20 +54,71 @@ agentmarket buyer acquire <object_id>
 agentmarket buyer transactions
 ```
 
-付费对象会先返回 `402 Payment Required`，SDK 抛出 `PaymentRequiredError` 并携带账单信息；完成支付后按账单中的 proof 重试 acquire。
+付费对象会先返回 `402 Payment Required`。SDK 的 `PaymentRequiredError.bill` 是便于阅读和决策的**已解析账单**，不是可直接填入 `Payment-Proof` Header 的原始凭证。官方支付宝 402 买家支付会保存原始 `Payment-Needed` Header 与原始请求上下文，支付后自行恢复资源请求；自定义支付适配器取得平台认可的 proof 后，再调用 `knowledge.acquire(object_id, payment_proof=proof)`。
 
-## 卖家常用命令
+## 身份模式与切换
 
-先在卖家网页后台完成邮箱登录并创建 API Key，然后配置机器凭证：
+CLI 有两类身份，不要在同一个 `AGENTMARKET_HOME` 中混用：
+
+| 模式 | 配置 | 适合命令 |
+|---|---|---|
+| 机器接入 | API Key + seller ID | `seller list`、`seller publish`、`seller dashboard` |
+| 邮箱网页会话 | `seller login` 创建的 Cookie session | `seller me`、`seller applications`、`seller logout` |
+
+同时存在 API Key 和 Cookie 会触发服务端/CLI 的 `90004` 身份冲突守卫。这是安全边界，不要绕过。
+
+### 机器接入
 
 ```bash
 export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
 
-agentmarket seller login you@example.com
 agentmarket config set api-key "<your_api_key>"
 agentmarket config set seller-id "<your_seller_id>"
 
+agentmarket seller list
+agentmarket seller dashboard
+```
+
+这条路径不需要、也不要执行 `seller login` 或 `seller me`。
+
+### 邮箱网页会话
+
+```bash
+export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+agentmarket seller login you@example.com
 agentmarket seller me
+agentmarket seller applications
+```
+
+这条路径不要再配置机器 API Key。
+
+### 切换或并用
+
+已有邮箱会话要切到机器接入时：
+
+```bash
+agentmarket seller logout
+agentmarket config set api-key "<your_api_key>"
+agentmarket config set seller-id "<your_seller_id>"
+```
+
+`seller logout` 只清除网页 session，不删除机器配置。需要长期并用时，为两个身份使用独立目录，并在每个命令前显式指定，避免环境变量串入另一个会话：
+
+```bash
+AGENTMARKET_HOME="$HOME/.agentmarket/machine" agentmarket seller list
+AGENTMARKET_HOME="$HOME/.agentmarket/web" agentmarket seller login you@example.com
+```
+
+## 卖家常用命令
+
+先在卖家网页后台完成邮箱登录并创建一次性 API Key；随后按上面的机器接入路径使用新配置目录配置 API Key 和 seller ID。不要先执行 `seller login` 再配置机器凭证。
+
+```bash
+export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+
+agentmarket config set api-key "<your_api_key>"
+agentmarket config set seller-id "<your_seller_id>"
+
 agentmarket seller list
 agentmarket seller dashboard
 ```
@@ -112,14 +163,14 @@ result = client.seller.publish_object({...})
 print(result)
 ```
 
-网页会话相关命令：
+网页会话请使用独立 `AGENTMARKET_HOME`；相关命令：
 
 ```bash
 agentmarket seller applications
 agentmarket seller logout
 ```
 
-`logout` 只清理本地保存的网页 session，不会删除已配置的 API Key 或 seller ID。
+`logout` 只清理本地保存的网页 session，不会删除已配置的 API Key 或 seller ID。混用身份时，先 `seller logout`，再检查是否应切换到独立的机器配置目录。
 
 ## Admin 内容审核命令
 

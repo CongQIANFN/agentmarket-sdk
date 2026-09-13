@@ -60,7 +60,9 @@ item = client.knowledge.acquire("<object_id>")
 print(item.content)
 ```
 
-0 元对象会自动确认；付费对象先抛出 `PaymentRequiredError`。完成支付后，使用返回账单/支付结果中的 proof 重试 acquire。
+0 元对象会自动确认；付费对象先抛出 `PaymentRequiredError`。`bill` 是已解析账单，不是 `Payment-Proof` 原始凭证。官方支付宝 402 买家支付会保留原始请求并自行恢复资源；自定义支付适配器取得平台认可的 proof 后，再调用 `knowledge.acquire(object_id, payment_proof=proof)`。
+
+CLI 有机器接入和邮箱网页会话两类身份。机器接入只配置 API Key 和 seller ID，不要先执行 `seller login`；邮箱网页会话只使用 Cookie，不要再配置机器 Key。混用时服务端/CLI 会返回 `90004`。
 
 CLI：
 
