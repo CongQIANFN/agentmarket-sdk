@@ -352,17 +352,20 @@ def _run_admin(args: argparse.Namespace) -> int:
                 headers=headers,
             )
         elif args.review_command == "approve":
+            payload = {"expected_version": args.expected_version}
+            if args.note is not None:
+                payload["note"] = args.note
             data, _ = _request_json(
                 "POST",
                 f"{base_url}/admin/review-objects/{args.object_id}/approve",
-                json_body={"note": args.note} if args.note is not None else {},
+                json_body=payload,
                 headers=headers,
             )
         else:
             data, _ = _request_json(
                 "POST",
                 f"{base_url}/admin/review-objects/{args.object_id}/reject",
-                json_body={"note": args.note},
+                json_body={"note": args.note, "expected_version": args.expected_version},
                 headers=headers,
             )
         _print_json(data)
@@ -390,6 +393,15 @@ def _run_config(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    def positive_int(value: str) -> int:
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError("必须是正整数") from exc
+        if parsed < 1:
+            raise argparse.ArgumentTypeError("必须是正整数")
+        return parsed
+
     parser = argparse.ArgumentParser(prog="agentmarket")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -453,9 +465,11 @@ def build_parser() -> argparse.ArgumentParser:
     review_content.add_argument("object_id")
     review_approve = review_commands.add_parser("approve")
     review_approve.add_argument("object_id")
+    review_approve.add_argument("--expected-version", required=True, type=positive_int)
     review_approve.add_argument("--note")
     review_reject = review_commands.add_parser("reject")
     review_reject.add_argument("object_id")
+    review_reject.add_argument("--expected-version", required=True, type=positive_int)
     review_reject.add_argument("--note", required=True)
     admin.set_defaults(func=_run_admin)
 

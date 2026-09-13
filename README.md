@@ -184,8 +184,8 @@ agentmarket config set seller-id "<admin_seller_id>"
 agentmarket admin review list --status pending_review
 agentmarket admin review show <object_id>
 agentmarket admin review content <object_id>
-agentmarket admin review approve <object_id> --note "approved"
-agentmarket admin review reject <object_id> --note "reason"
+agentmarket admin review approve <object_id> --expected-version <content_version> --note "approved"
+agentmarket admin review reject <object_id> --expected-version <content_version> --note "reason"
 ```
 
 ## 更多文档
