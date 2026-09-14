@@ -4,6 +4,7 @@ AgentMarket 的公开 Python SDK 和 CLI 客户端。本仓库只包含客户端
 
 - Python 版本：**3.12+**
 - 运行依赖：`httpx`
+- 买家会话文件使用跨进程锁与原子写入，并发首次启动共用同一身份
 - 默认 API Base：`http://localhost:8000/api/v1`
 - 生产 API Base：`http://8.133.218.16:8000/api/v1`
 

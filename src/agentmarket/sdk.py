@@ -20,8 +20,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +31,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 logger = logging.getLogger("agentmarket.sdk")
 
@@ -223,11 +230,39 @@ def _default_home() -> Path:
     return Path(os.environ.get("AGENTMARKET_HOME", Path.home() / ".agentmarket"))
 
 
+@contextmanager
+def _session_file_lock(home: Path):
+    """跨进程互斥锁；锁文件独立于 session 文件，避免 replace 后锁旧 inode。"""
+    home.mkdir(parents=True, exist_ok=True)
+    try:
+        home.chmod(0o700)
+    except OSError:
+        pass
+    lock_path = home / ".session.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if os.name == "nt":
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 class _SessionStore:
     """会话标识与日消费的本地持久化（让续交付/账单复用/评分防刷对 SDK 用户生效）。
 
-    会话即买方身份（免 Proof 续交付凭证），文件以 0600 原子创建（O_CREAT 带权限，
-    无「先 0644 后 chmod」的可读窗口）；损坏内容（无 cs_ 前缀）视为失效重建。
+    会话即买方身份（免 Proof 续交付凭证）。O-03 后读取/创建/覆盖都使用跨进程锁；
+    持久化采用独占临时文件 + fsync + 原子替换，写入失败明确报错而不是静默降级。
     """
 
     def __init__(self, home: Path | None = None):
@@ -239,29 +274,81 @@ class _SessionStore:
     def load_or_create(self) -> str:
         if self._session:
             return self._session
-        try:
-            value = self.session_file.read_text().strip()
-            if value.startswith("cs_"):  # 前缀校验：撕裂/污染内容不当作身份发出
-                self._session = value
-                return value
-            if value:
-                logger.warning("会话文件内容异常（无 cs_ 前缀），已重建：%s", self.session_file)
-        except OSError:
-            pass
-        self._session = f"cs_sdk_{uuid.uuid4().hex}"
-        self.save(self._session)
-        return self._session
+        with _session_file_lock(self.home):
+            if self._session:
+                return self._session
+            persisted = self._read_session_file()
+            if persisted is not None:
+                self._session = persisted
+                return persisted
+            session = f"cs_sdk_{uuid.uuid4().hex}"
+            self._atomic_write(session, expected_current=None)
+            self._session = session
+            return session
 
-    def save(self, session: str) -> None:
-        self._session = session
+    def _read_session_file(self) -> str | None:
         try:
-            self.home.mkdir(parents=True, exist_ok=True)
-            # O_CREAT 即带 0600：权限原子生效（P4 审查 P1-1），失败仅降级不静默
-            fd = os.open(self.session_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                f.write(session)
-        except OSError as e:
-            logger.warning("会话持久化失败（退化为内存会话）：%s %s", self.session_file, e)
+            if self.session_file.is_symlink():
+                raise AgentMarketError(
+                    CLIENT_ERROR_BASE + 4,
+                    f"会话文件不能是符号链接：{self.session_file}",
+                )
+            raw = self.session_file.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise AgentMarketError(
+                CLIENT_ERROR_BASE + 4,
+                f"会话文件读取失败：{self.session_file}",
+            ) from exc
+        if not raw or not raw.startswith("cs_"):
+            raise AgentMarketError(
+                CLIENT_ERROR_BASE + 4,
+                f"会话文件内容无效，拒绝覆盖购买历史凭据：{self.session_file}",
+            )
+        return raw
+
+    def _atomic_write(self, session: str, *, expected_current: str | None) -> None:
+        self.home.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".session.", dir=self.home)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                file.write(session)
+                file.flush()
+                os.fsync(file.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, self.session_file)
+        except OSError as exc:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise AgentMarketError(
+                CLIENT_ERROR_BASE + 4,
+                f"会话持久化失败：{self.session_file}",
+            ) from exc
+
+    def save(self, session: str, *, expected_current: str | None = None) -> None:
+        """在锁内校验磁盘状态后原子覆盖；迟到响应不得覆盖其他进程的新身份。"""
+        if not session.startswith("cs_"):
+            raise AgentMarketError(CLIENT_ERROR_BASE + 4, "平台会话格式无效")
+        with _session_file_lock(self.home):
+            current = self._read_session_file()
+            if current == session:
+                self._session = session
+                return
+            if expected_current is not None and current != expected_current:
+                raise AgentMarketError(
+                    CLIENT_ERROR_BASE + 4,
+                    "会话文件已被其他进程更新，拒绝覆盖购买历史凭据",
+                )
+            if expected_current is None and current is not None:
+                raise AgentMarketError(
+                    CLIENT_ERROR_BASE + 4,
+                    "会话文件已存在，拒绝无预期覆盖购买历史凭据",
+                )
+            self._atomic_write(session, expected_current=expected_current)
+            self._session = session
 
     # ---- 日消费（本地建议性限额，P3-2；并发多实例可能少记，限额语义本就为建议性）----
     def spent_today(self) -> int:
@@ -690,8 +777,13 @@ class Client:
     def _sync_session_from_response(self, response: httpx.Response) -> None:
         """07-A：402 回显平台会话（首次未带时平台生成）→ 覆盖本地值。"""
         echoed = response.headers.get(SESSION_HEADER)
-        if echoed and echoed != self.session.load_or_create():
-            self.session.save(echoed)
+        if not echoed:
+            return
+        if not echoed.startswith("cs_"):
+            raise AgentMarketError(CLIENT_ERROR_BASE + 4, "平台回显会话格式无效")
+        previous = self.session.load_or_create()
+        if echoed != previous:
+            self.session.save(echoed, expected_current=previous)
 
     def _request(
         self,
