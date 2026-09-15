@@ -1,6 +1,6 @@
 [project]
 name = "agentmarket-sdk"
-version = "0.2.2"
+version = "0.2.3"
 description = "AgentMarket SDK - 面向 AI Agent 的按次付费数据集市客户端"
 requires-python = ">=3.12"
 dependencies = [

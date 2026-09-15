@@ -492,11 +492,61 @@ class TransactionsAPI(_Namespace):
 class SellerAPI(_Namespace):
     """卖家管理方法（需 Client(api_key=..., seller_id=...)）。"""
 
-    def publish_object(self, data: dict) -> dict:
-        return self._client._request("POST", "/seller/objects", json=data)
+    def pricing_options(self, route_type: str = "platform_hosted") -> dict:
+        """读取 Route A 当前环境可选价格档位。"""
+        return self._client._request(
+            "GET",
+            "/seller/pricing-options",
+            params={"route_type": route_type},
+        )
 
-    def update_object(self, object_id: str, data: dict) -> dict:
-        return self._client._request("PUT", f"/seller/objects/{object_id}", json=data)
+    def find_pricing_option(
+        self,
+        price_cents: int,
+        *,
+        currency: str = "CNY",
+        route_type: str = "platform_hosted",
+    ) -> dict | None:
+        """按价格和币种定位可选 Route A 档位；找不到返回 None。"""
+        payload = self.pricing_options(route_type)
+        for item in payload.get("items", []):
+            if (
+                item.get("price_cents") == price_cents
+                and item.get("currency") == currency
+                and item.get("selectable", True)
+            ):
+                return item
+        return None
+
+    @staticmethod
+    def _apply_pricing_template(data: dict, pricing_template_id: str | None) -> dict:
+        payload = dict(data)
+        if pricing_template_id:
+            payload["pricing_template_id"] = pricing_template_id
+        route = payload.get("route_type")
+        source = payload.get("source_type")
+        price = (payload.get("pricing") or {}).get("price_per_call_cents")
+        if route == "platform_hosted" and source == "hosted" and price not in (None, 0):
+            if not payload.get("pricing_template_id"):
+                raise ValueError(
+                    "收费 Route A 对象必须先调用 seller.pricing_options() 选择 "
+                    "pricing_template_id；免费对象可提交 price_per_call_cents=0 且省略该字段"
+                )
+        return payload
+
+    def publish_object(self, data: dict, *, pricing_template_id: str | None = None) -> dict:
+        payload = self._apply_pricing_template(data, pricing_template_id)
+        return self._client._request("POST", "/seller/objects", json=payload)
+
+    def update_object(
+        self,
+        object_id: str,
+        data: dict,
+        *,
+        pricing_template_id: str | None = None,
+    ) -> dict:
+        payload = self._apply_pricing_template(data, pricing_template_id)
+        return self._client._request("PUT", f"/seller/objects/{object_id}", json=payload)
 
     def import_objects(self, data: dict, batch_id: str | None = None) -> dict:
         payload = dict(data)

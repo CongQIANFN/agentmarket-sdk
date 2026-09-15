@@ -6,7 +6,7 @@ AgentMarket 的公开 Python SDK 和 CLI 客户端。本仓库只包含客户端
 - 运行依赖：`httpx`
 - 买家会话文件使用跨进程锁与原子写入，并发首次启动共用同一身份
 - 默认 API Base：`http://localhost:8000/api/v1`
-- 生产 API Base：`http://8.133.218.16:8000/api/v1`
+- 生产 API Base：`https://api.agentmarket.org.cn/api/v1`
 
 ## 安装
 
@@ -34,7 +34,7 @@ agentmarket --help
 ```python
 from agentmarket import Client
 
-client = Client(base_url="http://8.133.218.16:8000/api/v1")
+client = Client(base_url="https://api.agentmarket.org.cn/api/v1")
 
 results = client.knowledge.query("上海")
 for item in results:
@@ -47,7 +47,7 @@ print(item.content)
 CLI 示例：
 
 ```bash
-export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+export AGENTMARKET_BASE_URL=https://api.agentmarket.org.cn/api/v1
 
 agentmarket buyer query "上海"
 agentmarket buyer get <object_id>
@@ -71,7 +71,7 @@ CLI 有两类身份，不要在同一个 `AGENTMARKET_HOME` 中混用：
 ### 机器接入
 
 ```bash
-export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+export AGENTMARKET_BASE_URL=https://api.agentmarket.org.cn/api/v1
 
 agentmarket config set api-key "<your_api_key>"
 agentmarket config set seller-id "<your_seller_id>"
@@ -85,7 +85,7 @@ agentmarket seller dashboard
 ### 邮箱网页会话
 
 ```bash
-export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+export AGENTMARKET_BASE_URL=https://api.agentmarket.org.cn/api/v1
 agentmarket seller login you@example.com
 agentmarket seller me
 agentmarket seller applications
@@ -115,7 +115,7 @@ AGENTMARKET_HOME="$HOME/.agentmarket/web" agentmarket seller login you@example.c
 先在卖家网页后台完成邮箱登录并创建一次性 API Key；随后按上面的机器接入路径使用新配置目录配置 API Key 和 seller ID。不要先执行 `seller login` 再配置机器凭证。
 
 ```bash
-export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+export AGENTMARKET_BASE_URL=https://api.agentmarket.org.cn/api/v1
 
 agentmarket config set api-key "<your_api_key>"
 agentmarket config set seller-id "<your_seller_id>"
@@ -155,13 +155,24 @@ agentmarket seller publish --file objects.json
 from agentmarket import Client
 
 client = Client(
-    base_url="http://8.133.218.16:8000/api/v1",
+    base_url="https://api.agentmarket.org.cn/api/v1",
     api_key="<your_api_key>",
     seller_id="<your_seller_id>",
 )
 
 result = client.seller.publish_object({...})
 print(result)
+```
+
+Route A 免费对象可以直接提交 `price_per_call_cents=0`。收费对象必须先读取档位并选择 `pricing_template_id`：
+
+```python
+options = client.seller.pricing_options()
+option = next(item for item in options["items"] if item["price_cents"] == 1)
+result = client.seller.publish_object(
+    {...},
+    pricing_template_id=option["template_id"],
+)
 ```
 
 网页会话请使用独立 `AGENTMARKET_HOME`；相关命令：
@@ -178,7 +189,7 @@ agentmarket seller logout
 管理员使用受权限保护的 API Key 和 seller ID 配置后审核对象：
 
 ```bash
-export AGENTMARKET_BASE_URL=http://8.133.218.16:8000/api/v1
+export AGENTMARKET_BASE_URL=https://api.agentmarket.org.cn/api/v1
 agentmarket config set api-key "<admin_api_key>"
 agentmarket config set seller-id "<admin_seller_id>"
 
