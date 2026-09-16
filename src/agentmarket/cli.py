@@ -404,7 +404,7 @@ def _run_config(args: argparse.Namespace) -> int:
             )
         if not parsed.hostname:
             raise AgentMarketError(90004, "base-url 缺少主机名，请输入完整 API 地址")
-        config["base_url"] = args.value
+        config["base_url"] = value
     elif args.key == "api-key":
         config["api_key"] = args.value
     else:

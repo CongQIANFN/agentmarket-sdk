@@ -650,12 +650,6 @@ class Client:
         else:
             self.session = _SessionStore()
         self.session.load_or_create()
-        from agentmarket.purchase_history import PurchaseHistory
-
-        self._purchase_history = PurchaseHistory(
-            base_url=self.base_url,
-            session=self.session.load_or_create(),
-        )
 
         self._http = httpx.Client(
             base_url=self.base_url, timeout=timeout, transport=_transport, trust_env=trust_env
@@ -673,6 +667,14 @@ class Client:
     @creator_id.setter
     def creator_id(self, value: str | None) -> None:
         self.seller_id = value
+
+    def _current_purchase_history(self):
+        from agentmarket.purchase_history import PurchaseHistory
+
+        return PurchaseHistory(
+            base_url=self.base_url,
+            session=self.session.load_or_create(),
+        )
 
     def _provider_host_allowed(self, acquire_url: str) -> bool:
         """Route B provider 外呼白名单（不命中本地白名单就拒绝）。"""
@@ -921,8 +923,10 @@ class Client:
             # F14：公开货架 404 不再等于「无法交付」——已付过钱的调用者可以绕过
             # 货架走恢复通道（服务端仍按 Proof / 已付订单 fail-closed 裁决）
             return self._acquire_recovered(object_id, params, payment_proof, shelf_error=e)
-        if route.price_cents > 0 and not payment_proof:
-            self._purchase_history.require_repurchase_allowed(object_id, repurchase=repurchase)
+        if (route.price_cents or 0) > 0 and not payment_proof:
+            self._current_purchase_history().require_repurchase_allowed(
+                object_id, repurchase=repurchase
+            )
         if route.route_type == "creator_managed":
             return self._acquire_route_b(route, params=params, payment_proof=payment_proof)
         return self._acquire_route_a(object_id, params, payment_proof, route=route)
@@ -936,7 +940,7 @@ class Client:
     ) -> Knowledge:
         details = {**knowledge._ledger_details, **knowledge._purchase_meta}
         try:
-            self._purchase_history.record(
+            self._current_purchase_history().record(
                 object_id=knowledge.object_id,
                 topic=details["topic"],
                 route_type=details["route_type"],

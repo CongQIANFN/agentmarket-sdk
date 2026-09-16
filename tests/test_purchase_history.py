@@ -38,7 +38,7 @@ def _client(tmp_path: Path, handler, *, auto_pay: bool = True) -> Client:
     )
 
 
-def _route(price_cents: int = 10) -> dict:
+def _route(price_cents: int | None = 10) -> dict:
     return {
         "object_id": "object-1",
         "topic": "季度财报",
@@ -102,6 +102,8 @@ def test_base_url_rejects_blank_invalid_and_missing_host(tmp_path, monkeypatch, 
 
     assert cli.main(["config", "set", "base-url", "http://localhost:8000/api/v1"]) == 0
     assert cli.main(["config", "set", "base-url", "https://api.example.com/api/v1"]) == 0
+    assert cli.main(["config", "set", "base-url", "  https://stripped.example.com/api/v1  "]) == 0
+    assert cli._read_config()["base_url"] == "https://stripped.example.com/api/v1"
 
 
 def test_config_allows_explicit_clearing(tmp_path, monkeypatch):
@@ -185,6 +187,45 @@ def test_free_object_is_not_blocked(tmp_path):
     calls = []
     client = _client(tmp_path, _route_a_handler(_route(0), _paid_delivery(), calls))
     client.knowledge.acquire("object-1")
+    acquired = client.knowledge.acquire("object-1")
+    assert acquired.object_id == "object-1"
+    client.close()
+
+
+def test_purchase_history_uses_session_updated_by_server(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        headers = {"X-Client-Session": "cs_new"}
+        if request.method == "GET" and request.url.path.endswith("/knowledge/object-1"):
+            return httpx.Response(200, json=_body(_route()), headers=headers)
+        if request.method == "POST" and request.url.path.endswith("/knowledge/acquire"):
+            if not request.headers.get("Payment-Proof"):
+                return httpx.Response(
+                    402,
+                    json=_body({"message": "Payment Required"}, code=40200),
+                    headers={**headers, "Payment-Needed": _payment_needed()},
+                )
+            return httpx.Response(200, json=_body(_paid_delivery()), headers=headers)
+        if request.method == "POST" and request.url.path.endswith("/payment/mock-pay"):
+            return httpx.Response(200, json=_body({"proof": "mock-proof"}), headers=headers)
+        return httpx.Response(404, json=_body(None, code=40400))
+
+    client = _client(tmp_path, handler)
+    client.knowledge.acquire("object-1")
+    record = json.loads((tmp_path / "purchases.jsonl").read_text(encoding="utf-8"))
+    assert record["session"] == "cs_new"
+
+    with pytest.raises(AgentMarketError) as excinfo:
+        client.knowledge.acquire("object-1")
+    assert excinfo.value.code == 91001
+    client.close()
+
+
+def test_null_price_is_not_blocked(tmp_path):
+    calls = []
+    client = _client(tmp_path, _route_a_handler(_route(None), _paid_delivery(), calls))
     acquired = client.knowledge.acquire("object-1")
     assert acquired.object_id == "object-1"
     client.close()
