@@ -54,7 +54,7 @@ OBJECT_NOT_FOUND_CODE = 40401
 # F14 恢复语义准入：只有确实付过钱的订单才算「有恢复资格」。pending/expired 未付款、
 # refunded 已退款，都不构成绕过公开货架的理由（与服务端 buyer.RECOVERABLE_TX_STATUSES 同口径）
 RECOVERABLE_TX_STATUSES = frozenset({"paid", "delivered"})
-SDK_VERSION = "0.2.4"
+SDK_VERSION = "0.2.5"
 
 
 # ---------- 异常 ----------

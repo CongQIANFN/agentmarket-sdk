@@ -10,6 +10,8 @@ pip install git+https://github.com/CongQIANFN/agentmarket-sdk.git
 
 Python 要求：3.12+。
 
+`main` 分支是当前测试发布分支；升级属于显式动作，不由 SDK 自动执行。
+
 ## 2. 基础配置
 
 ```python
@@ -63,6 +65,15 @@ print(item.content)
 0 元对象会自动确认；付费对象先抛出 `PaymentRequiredError`。`bill` 是已解析账单，不是 `Payment-Proof` 原始凭证。官方支付宝 402 买家支付会保留原始请求并自行恢复资源；自定义支付适配器取得平台认可的 proof 后，再调用 `knowledge.acquire(object_id, payment_proof=proof)`。
 
 CLI 有机器接入和邮箱网页会话两类身份。机器接入只配置 API Key 和 seller ID，不要先执行 `seller login`；邮箱网页会话只使用 Cookie，不要再配置机器 Key。混用时服务端/CLI 会返回 `90004`。
+
+在执行付费获取前，可以先检查本地 CLI 是否落后于远端 `main`：
+
+```bash
+agentmarket update check
+```
+
+返回 `update_available=true` 时，先让用户确认是否升级；返回 `status=unknown` 时，
+说明网络或本地安装元数据不足以判断，也应让用户确认后再继续付费。
 
 CLI：
 

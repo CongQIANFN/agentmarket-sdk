@@ -119,7 +119,7 @@ def test_global_version(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["--version"])
     assert excinfo.value.code == 0
-    assert capsys.readouterr().out == "0.2.4\n"
+    assert capsys.readouterr().out == "0.2.5\n"
 
 
 def test_cli_rate_returns_confirmation_without_comment(tmp_path, monkeypatch, capsys):
@@ -300,7 +300,7 @@ def test_successful_acquire_records_complete_fields_without_proof(tmp_path):
     record = json.loads((tmp_path / "purchases.jsonl").read_text(encoding="utf-8"))
     assert record == {
         "ledger_schema_version": 1,
-        "sdk_version": "0.2.4",
+        "sdk_version": "0.2.5",
         "ts": record["ts"],
         "base_url": "http://testserver/api/v1",
         "session": record["session"],

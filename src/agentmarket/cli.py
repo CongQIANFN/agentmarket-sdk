@@ -15,6 +15,7 @@ import httpx
 
 import agentmarket
 from agentmarket.sdk import AgentMarketError, Client
+from agentmarket.update_check import check_update
 
 DEFAULT_BASE_URL = "http://localhost:8000/api/v1"
 SELLER_COOKIE_NAME = "am_seller_session"
@@ -414,6 +415,13 @@ def _run_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_update(args: argparse.Namespace) -> int:
+    if args.update_command == "check":
+        _print_json(check_update(agentmarket.__version__))
+        return 0
+    raise AgentMarketError(90004, "不支持的 update 子命令")
+
+
 def build_parser() -> argparse.ArgumentParser:
     def positive_int(value: str) -> int:
         try:
@@ -504,6 +512,11 @@ def build_parser() -> argparse.ArgumentParser:
     config_set.add_argument("key", choices=["base-url", "api-key", "seller-id"])
     config_set.add_argument("value")
     config.set_defaults(func=_run_config)
+
+    update = commands.add_parser("update", help="CLI 更新检查")
+    update_commands = update.add_subparsers(dest="update_command", required=True)
+    update_commands.add_parser("check")
+    update.set_defaults(func=_run_update)
     return parser
 
 

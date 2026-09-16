@@ -10,6 +10,8 @@ AgentMarket 的公开 Python SDK 和 CLI 客户端。本仓库只包含客户端
 
 ## 安装
 
+`main` 分支按当前测试发布分支管理。安装前请确认你可以接受测试发布版本。
+
 ```bash
 pip install git+https://github.com/CongQIANFN/agentmarket-sdk.git
 ```
@@ -32,6 +34,16 @@ agentmarket --help
 ```bash
 agentmarket --version
 ```
+
+检查本地安装与远端 `main` 是否一致：
+
+```bash
+agentmarket update check
+```
+
+该命令会比较本地 git 安装元数据和远端 `main` commit。网络失败、GitHub 限流或本
+地不是 git 安装时会返回 `status=unknown`，不会自动升级。可用
+`AGENTMARKET_NO_UPDATE_CHECK=1` 禁用。
 
 ## 买家 / AI Agent 快速开始
 
