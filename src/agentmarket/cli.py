@@ -9,9 +9,11 @@ import sys
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
+import agentmarket
 from agentmarket.sdk import AgentMarketError, Client
 
 DEFAULT_BASE_URL = "http://localhost:8000/api/v1"
@@ -176,7 +178,7 @@ def _run_buyer(args: argparse.Namespace) -> int:
         base_url = _effective_config()["base_url"].rstrip("/")
         client = _client_from_config()
         session = client.session.load_or_create()
-        data, _ = _request_json(
+        _data, _ = _request_json(
             "POST",
             f"{base_url}/knowledge/{args.object_id}/rating",
             json_body={
@@ -187,7 +189,15 @@ def _run_buyer(args: argparse.Namespace) -> int:
             },
             headers={"X-Client-Session": session},
         )
-        _print_json(data)
+        _print_json(
+            {
+                "rated": True,
+                "object_id": args.object_id,
+                "transaction_id": args.transaction,
+                "rating": args.rating,
+                "used": args.used,
+            }
+        )
         return 0
     client = _client_from_config()
     if args.buyer_command == "query":
@@ -195,7 +205,7 @@ def _run_buyer(args: argparse.Namespace) -> int:
     elif args.buyer_command == "get":
         _print_json(client.knowledge.get(args.object_id).to_dict())
     elif args.buyer_command == "acquire":
-        _print_json(client.knowledge.acquire(args.object_id).to_dict())
+        _print_json(client.knowledge.acquire(args.object_id, repurchase=args.repurchase).to_dict())
     else:
         _print_json(client.transactions.list(page=args.page))
     return 0
@@ -382,6 +392,18 @@ def _run_config(args: argparse.Namespace) -> int:
         return 0
     config = _read_config()
     if args.key == "base-url":
+        value = args.value.strip()
+        parsed = urlparse(value)
+        if not value:
+            raise AgentMarketError(
+                90004, "base-url 不能为空或全空白，请输入 http:// 或 https:// API 地址"
+            )
+        if parsed.scheme not in ("http", "https"):
+            raise AgentMarketError(
+                90004, "base-url 必须以 http:// 或 https:// 开头；本地调试允许 localhost HTTP"
+            )
+        if not parsed.hostname:
+            raise AgentMarketError(90004, "base-url 缺少主机名，请输入完整 API 地址")
         config["base_url"] = args.value
     elif args.key == "api-key":
         config["api_key"] = args.value
@@ -403,6 +425,7 @@ def build_parser() -> argparse.ArgumentParser:
         return parsed
 
     parser = argparse.ArgumentParser(prog="agentmarket")
+    parser.add_argument("--version", action="version", version=agentmarket.__version__)
     commands = parser.add_subparsers(dest="command", required=True)
 
     buyer = commands.add_parser("buyer", help="买方命令")
@@ -413,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     buyer_get.add_argument("object_id")
     buyer_acquire = buyer_commands.add_parser("acquire")
     buyer_acquire.add_argument("object_id")
+    buyer_acquire.add_argument("--repurchase", action="store_true")
     buyer_transactions = buyer_commands.add_parser("transactions")
     buyer_transactions.add_argument("--page", type=int, default=1)
     buyer_rate = buyer_commands.add_parser("rate")

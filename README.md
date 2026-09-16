@@ -27,6 +27,12 @@ python -c "import agentmarket; print(agentmarket.__version__)"
 agentmarket --help
 ```
 
+也可以直接查看版本号：
+
+```bash
+agentmarket --version
+```
+
 ## 买家 / AI Agent 快速开始
 
 无需注册或 API Key。
@@ -54,6 +60,20 @@ agentmarket buyer get <object_id>
 agentmarket buyer acquire <object_id>
 agentmarket buyer transactions
 ```
+
+### 重复购买保护
+
+付费对象在同一个 `base_url + session + object_id` 下成功交付后，默认再次 `acquire` 会被 SDK 拦截，错误码为 `91001`。免费对象不拦截；显式传入 `payment_proof` 时也不拦截。确认要再次购买时，显式使用：
+
+```python
+item = client.knowledge.acquire("<object_id>", repurchase=True)
+```
+
+```bash
+agentmarket buyer acquire <object_id> --repurchase
+```
+
+SDK 会把成功交付记录写入 `$AGENTMARKET_HOME/purchases.jsonl`（默认 `~/.agentmarket/purchases.jsonl`），目录和账本权限分别是 `0700` 和 `0600`。账本只保存购买元数据，不保存 `Payment-Proof`。如果账本损坏，未传 proof 的付费 `acquire` 会 fail-closed 并返回明确的中文错误；免费 `acquire` 可以继续。SDK 不会静默清空、重建或截断账本。
 
 付费对象会先返回 `402 Payment Required`。SDK 的 `PaymentRequiredError.bill` 是便于阅读和决策的**已解析账单**，不是可直接填入 `Payment-Proof` Header 的原始凭证。官方支付宝 402 买家支付会保存原始 `Payment-Needed` Header 与原始请求上下文，支付后自行恢复资源请求；自定义支付适配器取得平台认可的 proof 后，再调用 `knowledge.acquire(object_id, payment_proof=proof)`。
 

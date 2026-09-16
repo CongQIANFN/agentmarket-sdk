@@ -72,6 +72,8 @@ agentmarket buyer acquire "<object_id>"
 
 SDK 会在本地保存客户端会话标识，用于关联买家交易；不要在多个买家/Agent 环境之间复用同一个会话目录。
 
+付费对象成功交付后，SDK 会在 `$AGENTMARKET_HOME/purchases.jsonl` 记录购买历史，并默认拦截同一 `base_url + session + object_id` 的重复付费购买。需要强制重买时使用 `repurchase=True` 或 `agentmarket buyer acquire <object_id> --repurchase`。免费对象和显式传入 `payment_proof` 的请求不经过该闸门。账本损坏时，未传 proof 的付费请求会 fail-closed；SDK 不会静默重建账本，也不会把 proof 写入账本。
+
 ## 5. 交易与评价
 
 ```python

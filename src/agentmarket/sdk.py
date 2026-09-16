@@ -54,6 +54,7 @@ OBJECT_NOT_FOUND_CODE = 40401
 # F14 恢复语义准入：只有确实付过钱的订单才算「有恢复资格」。pending/expired 未付款、
 # refunded 已退款，都不构成绕过公开货架的理由（与服务端 buyer.RECOVERABLE_TX_STATUSES 同口径）
 RECOVERABLE_TX_STATUSES = frozenset({"paid", "delivered"})
+SDK_VERSION = "0.2.4"
 
 
 # ---------- 异常 ----------
@@ -194,9 +195,22 @@ class Knowledge:
     content_created_at: str | None = None
     metadata_status: str = "unavailable"
     _raw: dict = field(default_factory=dict, repr=False)
+    _purchase_meta: dict = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict:
         return _to_dict(self)
+
+    @property
+    def _ledger_details(self) -> dict:
+        raw = self._raw or {}
+        return {
+            "topic": raw.get("topic", ""),
+            "route_type": raw.get("route_type", ""),
+            "transaction_id": str(
+                raw.get("transaction_id") or (self.metadata or {}).get("transaction_id", "")
+            ),
+            "content_version": self.content_version,
+        }
 
     @property
     def creator(self) -> dict:
@@ -415,6 +429,7 @@ class KnowledgeAPI(_Namespace):
         object_id: str,
         params: dict | None = None,
         payment_proof: str | None = None,
+        repurchase: bool = False,
     ) -> Knowledge:
         """获取内容（03 文档第 3.4 节）：自动完成标准 A402（07-C 时序）。
 
@@ -428,7 +443,7 @@ class KnowledgeAPI(_Namespace):
         自己订单绑定的路线拿回 `provider.acquire_url` 后直连开发者 provider。
         两者都不具备时原样抛出 404（对象确实不存在，或本会话无权恢复）。
         """
-        return self._client._acquire(object_id, params, payment_proof)
+        return self._client._acquire(object_id, params, payment_proof, repurchase)
 
     def rating(
         self,
@@ -635,6 +650,12 @@ class Client:
         else:
             self.session = _SessionStore()
         self.session.load_or_create()
+        from agentmarket.purchase_history import PurchaseHistory
+
+        self._purchase_history = PurchaseHistory(
+            base_url=self.base_url,
+            session=self.session.load_or_create(),
+        )
 
         self._http = httpx.Client(
             base_url=self.base_url, timeout=timeout, transport=_transport, trust_env=trust_env
@@ -889,6 +910,7 @@ class Client:
         object_id: str,
         params: dict | None = None,
         payment_proof: str | None = None,
+        repurchase: bool = False,
     ) -> Knowledge:
         # 07 文档：SDK 对 Agent 保持统一 acquire 调用体验，但内部按目录 route_type 分流
         try:
@@ -899,9 +921,55 @@ class Client:
             # F14：公开货架 404 不再等于「无法交付」——已付过钱的调用者可以绕过
             # 货架走恢复通道（服务端仍按 Proof / 已付订单 fail-closed 裁决）
             return self._acquire_recovered(object_id, params, payment_proof, shelf_error=e)
+        if route.price_cents > 0 and not payment_proof:
+            self._purchase_history.require_repurchase_allowed(object_id, repurchase=repurchase)
         if route.route_type == "creator_managed":
             return self._acquire_route_b(route, params=params, payment_proof=payment_proof)
-        return self._acquire_route_a(object_id, params, payment_proof)
+        return self._acquire_route_a(object_id, params, payment_proof, route=route)
+
+    def _record_purchase(
+        self,
+        knowledge: Knowledge,
+        *,
+        amount_cents: int,
+        out_trade_no: str,
+    ) -> Knowledge:
+        details = {**knowledge._ledger_details, **knowledge._purchase_meta}
+        try:
+            self._purchase_history.record(
+                object_id=knowledge.object_id,
+                topic=details["topic"],
+                route_type=details["route_type"],
+                amount_cents=amount_cents,
+                transaction_id=details["transaction_id"],
+                out_trade_no=out_trade_no,
+                content_version=details["content_version"],
+                sdk_version=SDK_VERSION,
+            )
+        except (AgentMarketError, OSError) as exc:
+            logger.warning("购买成功但本地购买历史写入失败：%s", exc)
+        return knowledge
+
+    def _purchase_knowledge(
+        self,
+        route: KnowledgeResult,
+        data: dict,
+        *,
+        amount_cents: int,
+        out_trade_no: str,
+    ) -> Knowledge:
+        knowledge = Knowledge.from_api(data)
+        knowledge._purchase_meta = {
+            "topic": route.topic,
+            "route_type": route.route_type,
+            "amount_cents": amount_cents,
+            "out_trade_no": out_trade_no,
+        }
+        return self._record_purchase(
+            knowledge,
+            amount_cents=amount_cents,
+            out_trade_no=out_trade_no,
+        )
 
     def _recovery_order(self, object_id: str) -> dict | None:
         """反查当前会话对该对象的已付订单（F14 恢复语义的准入证据之一）。
@@ -967,8 +1035,10 @@ class Client:
         object_id: str,
         params: dict | None = None,
         payment_proof: str | None = None,
+        route: KnowledgeResult | None = None,
     ) -> Knowledge:
         """路线A（platform_hosted + hosted）：平台 acquire 端点的 A402 时序。"""
+        route = route or KnowledgeResult(object_id=object_id)
         body: dict[str, Any] = {"object_id": object_id}
         if params is not None:
             body["params"] = params
@@ -980,7 +1050,9 @@ class Client:
             data = self._request(
                 "POST", "/knowledge/acquire", json=body, extra_headers=proof_header
             )
-            return Knowledge.from_api(data)  # 续交付直接成功（03-D）
+            return self._purchase_knowledge(
+                route, data, amount_cents=route.price_cents, out_trade_no=""
+            )
         except PaymentRequiredError as e:
             bill = e.bill or {}
             protocol = bill.get("protocol") or {}
@@ -993,7 +1065,9 @@ class Client:
                 data = self._request(
                     "POST", "/knowledge/acquire", json=body, extra_headers={PROOF_HEADER: proof}
                 )
-                return Knowledge.from_api(data)
+                return self._purchase_knowledge(
+                    route, data, amount_cents=0, out_trade_no=out_trade_no
+                )
 
             # ---- 付费分支：由 auto_pay 门控 ----
             if not self.auto_pay:
@@ -1007,12 +1081,14 @@ class Client:
                 data = self._request(
                     "POST", "/knowledge/acquire", json=body, extra_headers={PROOF_HEADER: proof}
                 )
-                return Knowledge.from_api(data)
+                return self._purchase_knowledge(
+                    route, data, amount_cents=amount_cents, out_trade_no=out_trade_no
+                )
             except PaymentRequiredError as retry_e:
                 # 服务端 BILL_EXPIRED 会重签新账单返回 402（04 文档 2.5 边界规则②）：
                 # 用新账单走一次完整支付+重发（限一次，不无限循环）
                 if self.auto_pay:
-                    return self._acquire_with_bill(retry_e, body)
+                    return self._acquire_with_bill(retry_e, body, route=route)
                 raise
 
     def _acquire_route_b(
@@ -1040,7 +1116,12 @@ class Client:
             resp = self._request_external(
                 "POST", acquire_url, json=body, extra_headers=extra_headers
             )
-            return Knowledge.from_api(self._parse_provider(resp))
+            return self._purchase_knowledge(
+                route,
+                self._parse_provider(resp),
+                amount_cents=route.price_cents,
+                out_trade_no="",
+            )
 
         try:
             resp = self._request_external(
@@ -1086,7 +1167,9 @@ class Client:
                     json=body,
                     extra_headers={**linkage_headers, PROOF_HEADER: proof},
                 )
-                return Knowledge.from_api(self._parse_provider(resp))
+                return self._purchase_knowledge(
+                    route, self._parse_provider(resp), amount_cents=0, out_trade_no=out_trade_no
+                )
 
             if not self.auto_pay:
                 raise
@@ -1106,7 +1189,12 @@ class Client:
                 json=body,
                 extra_headers={**linkage_headers, PROOF_HEADER: proof},
             )
-            return Knowledge.from_api(self._parse_provider(resp))
+            return self._purchase_knowledge(
+                route,
+                self._parse_provider(resp),
+                amount_cents=amount_cents,
+                out_trade_no=out_trade_no,
+            )
 
     def _confirm_with_retry_hint(self, object_id: str, request_id: str) -> str:
         """0 元 confirm；账单刚被清理时给出自愈指引而非误导性文案（P4 审查 P3-5）。"""
@@ -1119,7 +1207,9 @@ class Client:
                 ) from e
             raise
 
-    def _acquire_with_bill(self, e: PaymentRequiredError, body: dict) -> Knowledge:
+    def _acquire_with_bill(
+        self, e: PaymentRequiredError, body: dict, *, route: KnowledgeResult
+    ) -> Knowledge:
         """服务端重签账单后的单次完整重试（07-C 从步骤 2 起重走）。"""
         bill = e.bill or {}
         protocol = bill.get("protocol") or {}
@@ -1134,7 +1224,9 @@ class Client:
         data = self._request(
             "POST", "/knowledge/acquire", json=body, extra_headers={PROOF_HEADER: proof}
         )
-        return Knowledge.from_api(data)
+        return self._purchase_knowledge(
+            route, data, amount_cents=amount_cents, out_trade_no=out_trade_no
+        )
 
     def close(self) -> None:
         self._http.close()

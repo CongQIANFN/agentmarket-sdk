@@ -4,6 +4,7 @@
 """
 
 from agentmarket.sdk import (
+    SDK_VERSION,
     AgentMarketError,
     BudgetExceededError,
     Client,
@@ -12,7 +13,7 @@ from agentmarket.sdk import (
     PaymentRequiredError,
 )
 
-__version__ = "0.2.3"
+__version__ = SDK_VERSION
 
 __all__ = [
     "AgentMarketError",
@@ -21,5 +22,6 @@ __all__ = [
     "Knowledge",
     "KnowledgeResult",
     "PaymentRequiredError",
+    "SDK_VERSION",
     "__version__",
 ]
